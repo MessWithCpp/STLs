@@ -1,6 +1,6 @@
 #include <iostream>
 #include <string.h>
-#include "test_STL.h"
+#include "ash_STL.h"
 
 #define OBJECT_LIMITATION 50;
 
@@ -31,8 +31,8 @@ int Target::visible = 0;
 void print_vector(ash_vec::vector<Target> &v)
 {
         cout << "Start printing..." << endl;
-        Connector<Target> c_st = v.begin();
-        Connector<Target> c_end = v.end();
+        Connector_vector<Target> c_st = v.begin();
+        Connector_vector<Target> c_end = v.end();
 
         while(*c_st != *c_end)
         {

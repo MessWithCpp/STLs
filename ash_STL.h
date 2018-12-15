@@ -18,16 +18,16 @@ void STL_error(string error)
         cout << "Error :" << error << endl;
 }
 
-/* Connector class connects the vector with data stored
+/* Connector_vector class connects the vector with data stored
  * for user to fetch data. It works exactly like iterator */
 template<class T>
-class Connector
+class Connector_vector
 {
         T *my_data;
         unsigned long int current_index;
 
         public:
-        Connector()
+        Connector_vector()
         {
                 current_index = 0;
         }
@@ -42,7 +42,7 @@ class Connector
 
         T* operator * ()
         {
-                        return my_data;
+                return my_data;
         }
 
         void operator ++(int x)
@@ -55,7 +55,7 @@ class Connector
                 my_data = my_data - 1;
         }
 	
-	~Connector()
+	~Connector_vector()
         {
         }
 };
@@ -93,7 +93,7 @@ namespace ash_vec
                 bool i_am_resized;
                 T *base;
                 T *new_base;
-                Connector<T> *conn;
+                Connector_vector<T> *conn;
                 Reference_counter *ref;
                 unsigned long int default_size;
                 unsigned long int current_index;
@@ -107,7 +107,7 @@ namespace ash_vec
                         current_index = 0;
                         default_size = DEFAULT_VECTOR_SIZE;
                         try {
-                                conn = new Connector<T>[default_size];
+                                conn = new Connector_vector<T>[default_size];
                                 base = new T[default_size];
                                 ref = new Reference_counter();
                         }
@@ -141,7 +141,7 @@ namespace ash_vec
                         try {
                                 /*Resize connector*/
                                 delete[]conn;
-                                conn = new Connector<T>[default_size];
+                                conn = new Connector_vector<T>[default_size];
                                 new_base = new T[default_size];
                         }
                         catch(std::bad_alloc &e) {
@@ -237,7 +237,7 @@ namespace ash_vec
                 }
 		
 		/*return begin connector*/
-                Connector<T>& begin()
+                Connector_vector<T>& begin()
                 {
                         if(!clear_flag)
                                 return *(conn + 0);
@@ -245,7 +245,7 @@ namespace ash_vec
                 }
 		
 		/*return end connector*/
-                Connector<T>& end()
+                Connector_vector<T>& end()
                 {
                         if(!clear_flag)
                                 return *(conn + current_index - 1);
@@ -264,4 +264,147 @@ namespace ash_vec
                         }
                 }
         };
+}
+
+/* Doubly linked list structure and these nodes
+ * will be sent to iterators/list_connectors for
+ * storage */
+
+template<class T>
+struct Node
+{
+	struct Node *next;
+	struct Node *prev;
+	T data;
+};
+
+template<class T>
+class Connector_list
+{
+	struct Node<T> *self_data;
+
+	public:
+	Connector_list()
+	{
+		self_data = NULL;
+	}
+
+	void set_data(struct Node<T> *data)
+	{
+		self_data = data;
+	}
+
+	void operator ++ (int x)
+	{
+		this->self_data = this->self_data->next;
+	}
+
+	void operator -- (int x)
+	{
+		this->self_data = this->self_data->prev;
+	}
+
+	T* operator * ()
+	{
+		return &(self_data->data);
+	}
+
+	~Connector_list()
+	{
+	}
+};
+
+namespace ash_list
+{
+	template<class T>
+	class list
+	{
+
+		struct Node<T> *head;
+		struct Node<T> *tail;
+		Connector_list<T> *conn;
+		Connector_list<T> *con_start_node;
+		Connector_list<T> *con_end_node;
+
+		public:
+		list()
+		{
+			head = NULL;
+			tail = NULL;
+			conn = NULL;
+			con_start_node = NULL;
+			con_end_node = NULL;	
+		}
+		
+		struct Node<T>* create_node_from_data(T data_copy)
+		{
+			struct Node<T> *new_node = NULL;
+			new_node = new struct Node<T>();
+			new_node->data = data_copy;
+			return new_node;
+		}
+
+		Connector_list<T> *create_new_con_node(struct Node<T> *node_data)
+		{
+			Connector_list<T> *new_con = new Connector_list<T>();
+			new_con->set_data(node_data);
+			return new_con;
+		}
+
+		void push_back(T node_data)
+		{
+			struct Node<T> *tmp_node = NULL;
+			struct Node<T> *traversal_node = NULL;
+			Connector_list<T> *con_tmp_node = NULL;
+			Connector_list<T> *con_trav_node = NULL;
+
+			/* When we have single node then head and tail
+			 * points to same location */
+			if(!head) {
+				head = new struct Node<T>();
+				head->data = node_data;
+				tail = head;
+				head->next = NULL;
+				head->prev = NULL;
+
+				con_start_node = new Connector_list<T>();
+				con_start_node->set_data(head);
+				con_end_node = con_start_node;
+				return;
+			}
+			/*Create new node*/
+			tmp_node = create_node_from_data(node_data);
+			
+			/*When we have more than one nodes then traverse list and store it*/
+			traversal_node = head;
+
+			while(traversal_node->next != NULL)
+			{
+				traversal_node = traversal_node->next;
+			}
+			traversal_node->next = tmp_node;
+			tmp_node->next = NULL;
+			tmp_node->prev = traversal_node;
+			tail = tmp_node;
+
+			/*Allocating connector new chunk*/
+			con_tmp_node = create_new_con_node(tail);
+			con_end_node = con_tmp_node;		
+		}
+		
+		Connector_list<T>& begin()
+		{
+			return *con_start_node;
+		}
+
+		Connector_list<T>& end()
+		{
+			return *con_end_node;
+		}
+
+		~list()
+		{
+			/*Delete in chain access each element*/
+		}
+	};
 }
