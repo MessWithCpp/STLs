@@ -12,6 +12,7 @@
 #define CONFIG_FILE "satellite.conf"
 #define TOTAL_DISTANCE 100
 
+static unsigned int *min_speed = NULL;
 using namespace std;
 static bool all_sats_ready = false;
 static map<int , struct Sat_info> *satdata_global;
@@ -167,15 +168,22 @@ class Satellite_tracker
 
 	void register_satellites()
 	{
-		int satid_loc = 0;
+		int satid_loc = 0 , index = 0;
+		int satnums = satdata.size();
+		unsigned int sat_speeds[satnums];
 		map<int , struct Sat_info>::iterator it;
 		for(it = satdata.begin() ; it != satdata.end() ; it++)
 		{
+			sat_speeds[index] = it->second.satellite_speed;
 			satid_loc = it->first;
 			sats = new Satellite(satid_loc);
 			sats->setup(satid_loc);
 			sat_list.push_back(sats);
-		}	
+			index++;
+		}
+
+		/*Calculate min speed out of all satellites*/
+		min_speed = min_element(sat_speeds , sat_speeds + (sizeof(sat_speeds)/sizeof(sat_speeds[0])-1));			
 	}
 
 	void start_satellites()
@@ -184,7 +192,7 @@ class Satellite_tracker
 		list<Satellite_base*>::iterator sat_it;
 		struct itimerval it_val,remaining_time;
 		time_t time_spent;
-		unsigned int max_sat_time = TOTAL_DISTANCE/1;//Need to chnge this logic speed here taken is 1km/s
+		unsigned int max_sat_time = TOTAL_DISTANCE/(*min_speed);//Need to chnge this logic speed here taken is 1km/s
 		register_sigalarm();
 		it_val.it_value.tv_sec = max_sat_time;
 		it_val.it_value.tv_usec = 0;
