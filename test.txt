@@ -1,0 +1,14 @@
+Your task is to implment a dynamic memory allocator
+
+You must create a private github/bitbucket repo when you receive this task
+and give us access to that repo.
+
+All your work shall be updated in that repo throughout the period of your task.
+
+Commit regularly to that repo to enable us to track your progress.
+
+Your code should compile without any warnings using gcc -Wall -Wextra -ansi -pedantic -I. test.c
+
+You shall not use C++ for this task,
+
+This task must be done using C language only.
