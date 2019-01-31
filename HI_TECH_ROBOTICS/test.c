@@ -1,38 +1,14 @@
-/* Author : Amanullah Ashraf
- * Target : Making custom malloc much original like original.
- * */
-
-/*In this whole code I have tried my best to let malloc() behave like original malloc
- *Please do read the comments in relation to each step I have taken */
-
-#include <unistd.h>
-#include <pthread.h>
+#include "test.h"
 #include <stdio.h>
 #include <stdbool.h>
-#include <sys/mman.h>
 
-#define HEAP_SIZE (4 * 1024 * 1024) /* I have not restricted the code to just 4 MB. You can request the system as much 
-				       you want */
-
-#define M_MMAP_THRESHOLD_ASH 128*1024 /*Kept the mmap() threshold just to make difference for mmap() and sbrk() syscalls*/
-#define PAGE_SIZE_ASH 4*1024 /*Kept the page size as like x86 on standard malloc() i.e. 4k*/
-struct malloc_chunk_header *head , *tail; /*Keeping the addresses of chunks recieved from sbrk() in library itself*/
-pthread_mutex_t malloc_lock; /*Locking variable for protecting head and tail global variables*/
-
-/* Below is the structure of actual chunk that I made to keep the header 
- * information of memory fetched either from mmap or sbrk syscalls*/
-struct malloc_chunk_header
-{
-	size_t size;
-	bool is_free;
-	struct malloc_chunk_header *next;
-};
+#define HEAP_SIZE (4 * 1024 * 1024)
 
 /* the heap has a size of 4 MiB. */
 
 /* Your task is to implment a dynamic memory allocator */
 
-/* As a simplification, you may assume that all allocations will be */ /*----> I have not taken this assumption. Ask as much as you wantfrom this custom malloc()*/
+/* As a simplification, you may assume that all allocations will be */
 /* of the size 16 bytes or smaller */
 
 /* As a debugging aid, printf() may be used */
@@ -43,7 +19,23 @@ struct malloc_chunk_header
 /* then that memory storage shall be from this heap buffer only */
 /* NOTE that this may reduce the effective heap size from the application's point of view */
 
-//static uint8_t heap_buffer[HEAP_SIZE];
+struct malloc_chunk_header
+{
+	int size;
+	struct malloc_chunk_header *next;
+};
+
+static struct malloc_chunk_header *alloca_head;
+static struct malloc_chunk_header *alloca_tail;
+
+static struct malloc_chunk_header *free_head;
+static struct malloc_chunk_header *free_tail;
+
+static int remaining_heap=HEAP_SIZE;
+
+static uint8_t heap_buffer[HEAP_SIZE];
+
+static uint8_t *heap_top = heap_buffer;
 
 /* this file MUST NOT expose any symbols other than  */
 /* custom_free AND custom_malloc */
@@ -52,167 +44,250 @@ struct malloc_chunk_header
 
 /* You may not use any memory outside the heap_buffer */
 
-/* This function get_free_chunk() gives the addresses of malloc chunk that is already present in library after syscall sbrk()
- * This is basically checking the user requested size and comparing it with the existing size freed chunks
- * present in library and then returns if  successfully got it there in linked list */
-
-struct malloc_chunk_header* get_free_chunk(size_t user_req_size)
+void malloc_error(const char *str)
 {
-	bool got_chunk = false;
-	struct malloc_chunk_header *temp = head;
+	printf("Malloc error : %s\n",str);
+}
 
-	/*Traversing the sbrk() recievd chunk list to get desired chunk size*/
-	while(temp != NULL)
+struct malloc_chunk_header* search_free_bins(const int32_t size_requested)
+{
+	struct malloc_chunk_header *temp_node = free_head;
+	bool got_chunk = false;
+
+	if(!temp_node)
+		return NULL;
+	while(temp_node != NULL)
 	{
-		if(temp->is_free == true && (temp->size) >= user_req_size)
+		if(temp_node->size >= size_requested)
 		{
-			got_chunk = true;
+			got_chunk = true;	
 			break;
 		}
-		temp = temp->next;
+		temp_node = temp_node->next;
 	}
-	if(got_chunk == true)
-		return temp;
+	if(got_chunk)
+		return temp_node;
 	else
 		return NULL;
 }
 
-/*Actual code of malloc*/
-void * custom_malloc(size_t size)
+bool reconsolidate_free_bin(const int32_t user_size)
 {
-	struct malloc_chunk_header *header;
-	struct mmapped_chunk_header *mmap_header;
-	size_t total_size;
-	void *block;
-
-	/*Returning NULL for zero size*/
-	if(!size)
-		return NULL;
-
-	/*Checking size for making sbrk or mmap*/
-	/*For size requested above 128 kb we are making mmap() syscall*/
-	if(size > M_MMAP_THRESHOLD_ASH)
+	bool reconsolidation_successful = false;
+	struct malloc_chunk_header *temp_node = free_head;
+	struct malloc_chunk_next *next_chunk = NULL;
+	struct malloc_chunk_next *next_to_next_chunk = NULL;
+	
+	if(!temp_node)
+		return reconsolidation_successful;
+	if(temp_node->next)
 	{
-		/*Making size as page aligned for successful mmap()*/
-		/*Page size taken here is as like x86 page size 4 kb*/
-		size_t len = (size & ~(PAGE_SIZE_ASH - 1)) + PAGE_SIZE_ASH;
-		char *base = mmap(0, len, PROT_READ|PROT_WRITE,
-				MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-		if (base == (void *)-1)
-		{	
-			printf("MMAP failed\n");
-			return NULL;
+		/*Checking for 2 contiguous bins*/
+		if(((uint8_t*)(temp_node + 1) + temp_node->size) == temp_node->next)
+		{
+			temp_node->size = (temp_node->size + sizeof(struct malloc_chunk_header) + temp_node->next->size);
+			next_to_next_chunk = temp_node->next->next;
+			temp_node->next = next_to_next_chunk;
+			reconsolidation_successful = true;
 		}
-
-		/* Typecasting address recieved to write header information
-		 * and then returning the user , address(header+1) i.e address
-		 * after header information where user application can write*/
-
-		header = (struct malloc_chunk_header*)(base);
-		header->size = size;
-		return (void*)(header + 1);
 	}
-	/*Taking lock to protect thread from accessing head and tail memory*/
-	pthread_mutex_lock(&malloc_lock);
+	return reconsolidation_successful;
+}
 
-	/*Bring block from self designed library bin if possible*/
-	/*Please read the functionality of this function above this
-	 *functions definition */
-	header = get_free_chunk(size);
+bool check_for_user_chunk(struct malloc_chunk_header *user_ptr)
+{
+	struct malloc_chunk_header *actual_user_chunk = user_ptr - 1;
+	struct malloc_chunk_header *temp_chunk_node = alloca_head;
+	bool got_chunk = false;
 
-	if(header)
+	if(!temp_chunk_node)
+		return false;
+
+	/*Searching in alloca bin list*/
+	while(temp_chunk_node != NULL)
 	{
-		header->is_free = false;
-		pthread_mutex_unlock(&malloc_lock);
-		return (void*)(header + 1);
+		if(temp_chunk_node == actual_user_chunk)
+		{
+			got_chunk = true;
+			break;
+		}	
+		temp_chunk_node = temp_chunk_node->next;	
+	}
+	if(got_chunk)
+		return true;
+
+	temp_chunk_node = free_head;
+	if(!temp_chunk_node)
+		return false;
+
+	/*Searching is free bin list*/
+	while(temp_chunk_node != NULL)
+	{
+		if(temp_chunk_node == actual_user_chunk)
+		{
+			got_chunk = true;
+			break;
+		}	
+		temp_chunk_node = temp_chunk_node->next;	
+	}
+	if(got_chunk)
+		return true;
+
+	return got_chunk;	
+}
+
+bool remove_chunk_free_heap(struct malloc_chunk_header *user_chunk)
+{
+	bool is_top_chunk = false;
+	struct malloc_chunk_header *temp_chunk = alloca_head;
+
+	if((uint8_t*)(user_chunk) + user_chunk->size == heap_top)
+	{
+		is_top_chunk = true;
+
+		/*Traverse alloca list free heap*/
+		while(temp_chunk->next != alloca_tail)
+			temp_chunk = temp_chunk->next;
 	}
 
-	/*If library has no such sbrk() chunk of desired size , code comes here*/
-
-	/*Total size taken here is user size + header size to keep header info of chunk*/
-	total_size = size + sizeof(struct malloc_chunk_header); 
-
-	/*Request OS for heap memory using sbrk syscall*/
-	block = sbrk(total_size);
-
-	if(block == (void*)-1)
+	/*Free heap if got it as top chunk*/
+	if(is_top_chunk)
 	{
-		pthread_mutex_unlock(&malloc_lock);
+		temp_chunk->next = NULL;
+		alloca_tail = temp_chunk;
+		remaining_heap = remaining_heap + sizeof(struct malloc_chunk_header) + user_chunk->size;
+		heap_top = (uint8_t*)(user_chunk) + user_chunk->size;
+	}
+	return is_top_chunk;
+}
+
+void remove_chunk_from_alloca_list(struct malloc_chunk_header *user_chunk)
+{
+	struct malloc_chunk_header *actual_chunk = user_chunk - 1;
+	struct malloc_chunk_header *temp_chunk = alloca_head;
+	if(!temp_chunk)
+		return;
+	while(temp_chunk != NULL)
+	{
+		if(temp_chunk->next == actual_chunk)
+			break;
+		temp_chunk = temp_chunk->next;
+	}
+	temp_chunk->next = temp_chunk->next->next;
+}
+
+void * custom_malloc(const int32_t n)
+{
+	struct malloc_chunk_header *lib_bin_ptr = NULL;
+	struct malloc_chunk_header *temp_chunk = NULL;
+	struct malloc_chunk_header *chunk_to_add = NULL;
+
+	bool reconsolidation_successful = false;
+
+	/* You may return a null pointer if n > MAX_ALLOC */
+	if(n > MAX_ALLOC)
+		return NULL;
+
+	/*Searching free bins in library*/
+	lib_bin_ptr = search_free_bins(n);
+	
+	if(lib_bin_ptr)
+		return (void*)(lib_bin_ptr + 1);
+
+	/*Reconsolidate small sizes chunks in free bins to make large chunk*/
+	reconsolidation_successful = reconsolidate_free_bin(n);
+
+
+	/*Searching free bins again in library after reconsolidation*/
+	if(reconsolidation_successful)
+	{
+		lib_bin_ptr = search_free_bins(n);
+	
+		if(lib_bin_ptr)
+			return (void*)(lib_bin_ptr + 1);
+	}
+
+	/*If we are not able to get chunk of desired size then we need to expand heap*/
+	if((n > (remaining_heap - sizeof(struct malloc_chunk_header))) || remaining_heap < 0)
+	{
+		malloc_error("Heap Exhaused\n");
 		return NULL;
 	}
 
-	header = block;
-	header->is_free = false;
-	header->size = size;
-
-	/*Maintaining a single link list below for function get_free_chunk()*/
-
-	if(!head) {
-		head = header;
-		head->next = NULL;
-	}
-	if(tail)
+	/*Time to expand heap*/
+	if(!alloca_head)
 	{
-		tail->next = header;
-		header->next = NULL;
+		temp_chunk = (struct malloc_chunk_header*)(heap_top);
+		temp_chunk->size = n;
+		temp_chunk->next = NULL;
+		alloca_head = temp_chunk;
+		alloca_tail = alloca_head;
+		remaining_heap = remaining_heap - (sizeof(struct malloc_chunk_header) + n);
+		heap_top = (char*)((struct malloc_chunk_header*)(heap_top) + 1) + n;
+		return (void*)(alloca_head + 1);
 	}
-	tail = header;
-	pthread_mutex_unlock(&malloc_lock);
-
-	/*Returning actual pointer just after the point where header is finished
-	 *Thats why returned (header+1) */
-	return (void*) (header + 1);
+	else
+	{
+		temp_chunk = alloca_head;
+		while(temp_chunk->next != NULL)
+			temp_chunk = temp_chunk->next;
+		chunk_to_add = (struct malloc_chunk_header*)(heap_top);
+		chunk_to_add->size = n;
+		chunk_to_add->next = NULL;
+		temp_chunk->next = chunk_to_add;
+		return (void*)(temp_chunk + 1);
+	}	
 }
 
 void custom_free(const void * ptr)
 {
-	struct malloc_chunk_header *header;
+	bool chunk_is_present = false;
+	bool chunk_is_top_most_chunk = false;
+	struct malloc_chunk_header *temp_chunk = NULL;
 
-	/* Typecasting the void pointer to chunk so that we can
-	 * do arithmatic operations on pointer as we did in malloc*/
-	header = (struct malloc_chunk_header*)(ptr);
-
-	/* Coming back to the pointer address where actual
-	 * memory was allocated . In malloc we returned the user 
-	 * header + 1 , so here we need to subtract back*/
-
-	header = header - 1;
-
-	/* Making size comparison to take decision whether to keep
-	 * chunk in library link list as free or to release it to 
-	 * system using munmap() */
-
-	if(header->size > M_MMAP_THRESHOLD_ASH)
-	{
-		/*Frees the memory allocated using mmap*/
-		size_t size_loc = header->size;
-		size_t len = (size_loc & ~(PAGE_SIZE_ASH - 1)) + PAGE_SIZE_ASH;
-		int ret = munmap(header , len);
-		if(ret == -1)
-		{
-			printf("MUNMAP failure\n");
-		}
+	/*Check if that chunk is even a valid chunk or not*/
+	chunk_is_present = check_for_user_chunk(ptr);
+	if(!chunk_is_present)
 		return;
+	
+	/*Check if chunk is top most chunk of heap then we free heap by expanding its size*/
+	chunk_is_top_most_chunk = remove_chunk_free_heap(ptr);
+	if(chunk_is_top_most_chunk)
+		return;
+
+	/*Remove the chunk from alloca list by changing links*/
+	remove_chunk_from_alloca_list(ptr);
+
+	/*Adding chunk to free bin list after removing from alloca list*/
+	if(!free_head)
+	{
+		free_head = (struct malloc_chunk_header*)(ptr) - 1;
+		free_tail = free_head;
+		free_head->next = NULL;
 	}
 	else
-		/* Just marks the memory as free and keep them in library for later usage
-		 * while malloc() */
-		header->is_free = true;
+	{
+		temp_chunk = free_head;
+		while(temp_chunk->next != NULL)
+			temp_chunk = temp_chunk->next;
+		temp_chunk->next = (struct malloc_chunk_header*)(ptr) - 1;
+		free_tail = temp_chunk->next;
+		free_tail->next = NULL;
+	}		
+	return;			
 }
 
 int main()
 {
-	/*Test your sbrk code part of malloc size here*/
-	int *ptr = (int*)custom_malloc(sizeof(int));
-	*ptr = 10;
-	printf("Memory accessed from sbrk call and its data is : %d\n",*ptr);
-	custom_free(ptr);
-
-	/*Test your mmap code part of malloc here*/
-	void *ptr1 = custom_malloc(129*1024);
-	ptr = (int*)(ptr1);
-	*ptr = 1000;
-	printf("Memory accessed from mmap syscall and its data is : %d\n",*ptr);
-	custom_free(ptr);
+	int *p = (int*)custom_malloc(sizeof(int));
+	*p = 55;
+	printf("Data : %d\n",*p);
 	return 0;
 }
+/* Compiling this file as it is gives some unused variable errors. */
+
+/* Your final code must not give any warnings */
+
+/* You shall not use C++ for this task, */
+
+/* This task must be done using C language only. */
