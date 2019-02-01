@@ -10,6 +10,24 @@
 /* this function returns null pointer if heap memory is exhausted */
 /* or if n > MAX_ALLOC */
 void * custom_malloc(const int32_t n);
+#define HEAP_SIZE (4 * 1024 * 1024)
+struct malloc_chunk_header
+{
+	int size;
+	struct malloc_chunk_header *next;
+};
+
+static struct malloc_chunk_header *alloca_head;
+static struct malloc_chunk_header *alloca_tail;
+
+static struct malloc_chunk_header *free_head;
+static struct malloc_chunk_header *free_tail;
+
+static int remaining_heap=HEAP_SIZE;
+
+static uint8_t heap_buffer[HEAP_SIZE];
+
+static uint8_t *heap_top = heap_buffer;
 
 /* this function frees memory allocated by custom_malloc */
 
